@@ -63,17 +63,26 @@ pub fn request_microphone() -> bool {
 }
 
 #[tauri::command]
-pub async fn validate_api_key(app: AppHandle, api_key: String, provider: String) -> Result<(), String> {
-    let client = app
-        .try_state::<reqwest::Client>()
-        .ok_or("HTTP client not initialized")?;
-    match provider.as_str() {
-        "gemini" => crate::transcribe::validate_gemini_api_key(&client, &api_key)
+pub async fn validate_api_key(settings: AppSettings) -> Result<(), String> {
+    let active_key = settings.active_api_key().trim().to_string();
+    if active_key.is_empty() {
+        return Err("API key not configured".into());
+    }
+
+    let client = crate::http::client_for_settings(&settings).map_err(|e| e.to_string())?;
+    if settings.is_gemini() {
+        crate::transcribe::validate_gemini_api_key(&client, &active_key)
             .await
-            .map_err(|e| e.to_string()),
-        _ => crate::transcribe::validate_api_key(&client, &api_key)
-            .await
-            .map_err(|e| e.to_string()),
+            .map_err(|e| e.to_string())
+    } else {
+        crate::transcribe::validate_api_key(
+            &client,
+            &active_key,
+            &settings.model,
+            settings.openai_base_url(),
+        )
+        .await
+        .map_err(|e| e.to_string())
     }
 }
 
@@ -139,8 +148,8 @@ pub async fn retry_transcription(
     let wav_data = std::fs::read(audio_path).map_err(|e| e.to_string())?;
 
     let settings = crate::settings::get_settings();
-    let is_gemini = settings.provider == "gemini";
-    let active_key = if is_gemini { &settings.gemini_api_key } else { &settings.api_key };
+    let is_gemini = settings.is_gemini();
+    let active_key = settings.active_api_key().trim().to_string();
     if active_key.is_empty() {
         return Err("API key not configured".into());
     }
@@ -151,17 +160,22 @@ pub async fn retry_transcription(
         Some(settings.language.as_str())
     };
 
-    let client = app
-        .try_state::<reqwest::Client>()
-        .ok_or("HTTP client not initialized")?;
+    let client = crate::http::client_for_settings(&settings).map_err(|e| e.to_string())?;
     let text = if is_gemini {
-        transcribe::transcribe_gemini(&client, active_key, &settings.model, wav_data, lang)
+        transcribe::transcribe_gemini(&client, &active_key, &settings.model, wav_data, lang)
             .await
             .map_err(|e| e.to_string())?
     } else {
-        transcribe::transcribe_audio(&client, active_key, &settings.model, wav_data, lang)
-            .await
-            .map_err(|e| e.to_string())?
+        transcribe::transcribe_audio(
+            &client,
+            &active_key,
+            &settings.model,
+            settings.openai_base_url(),
+            wav_data,
+            lang,
+        )
+        .await
+        .map_err(|e| e.to_string())?
     };
 
     // Update entry in place (preserves ID and audio_path)

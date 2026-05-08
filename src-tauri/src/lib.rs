@@ -1,6 +1,7 @@
 mod commands;
 mod history;
 mod hotkey;
+mod http;
 pub mod paste;
 mod permissions;
 mod recorder;
@@ -177,10 +178,6 @@ pub fn run() {
             let recorder = Arc::new(AudioRecorder::new());
             app.manage(recorder.clone());
 
-            // Initialize shared HTTP client
-            let http_client = reqwest::Client::new();
-            app.manage(http_client);
-
             // Initialize enigo if accessibility is already granted
             if paste::is_accessibility_trusted() {
                 if let Ok(enigo_state) = paste::EnigoState::new() {
@@ -266,12 +263,12 @@ pub fn run() {
             // Initialize auto-updater
             updater::init(&app_handle);
 
-            log::info!("App started. Provider: {}, Shortcut: {}", settings.provider, settings.shortcut);
-            let active_key_set = if settings.provider == "gemini" {
-                !settings.gemini_api_key.is_empty()
-            } else {
-                !settings.api_key.is_empty()
-            };
+            log::info!(
+                "App started. Provider: {}, Shortcut: {}",
+                settings.provider,
+                settings.shortcut
+            );
+            let active_key_set = !settings.active_api_key().trim().is_empty();
             log::info!("API key configured: {}", active_key_set);
 
             Ok(())
@@ -519,12 +516,8 @@ fn stop_and_transcribe(app_handle: &tauri::AppHandle) {
     let audio_path_str = audio_path.to_string_lossy().to_string();
 
     let settings = settings::get_settings();
-    let is_gemini = settings.provider == "gemini";
-    let active_key = if is_gemini {
-        settings.gemini_api_key.clone()
-    } else {
-        settings.api_key.clone()
-    };
+    let is_gemini = settings.is_gemini();
+    let active_key = settings.active_api_key().trim().to_string();
     if active_key.is_empty() {
         log::error!("API key not configured!");
         close_overlay(app_handle);
@@ -535,19 +528,37 @@ fn stop_and_transcribe(app_handle: &tauri::AppHandle) {
         return;
     }
 
-    let handle = app_handle.clone();
-    let history = history.inner().clone();
-    let model = settings.model.clone();
-    let language = settings.language.clone();
-    let http_client = app_handle.state::<reqwest::Client>().inner().clone();
-
-    log::info!("Calling {} API with model={}...", settings.provider, model);
-
     let duration_ms = if sample_rate > 0 {
         Some((sample_count as i64 * 1000) / sample_rate as i64)
     } else {
         None
     };
+
+    let http_client = match http::client_for_settings(&settings) {
+        Ok(client) => client,
+        Err(e) => {
+            let message = e.to_string();
+            log::error!("Failed to initialize HTTP client: {}", message);
+            let error_text = format!("[Error: {}]", message);
+            let _ = history.add_entry(
+                &error_text,
+                &settings.model,
+                duration_ms,
+                Some(&audio_path_str),
+            );
+            let _ = app_handle.emit("transcription-error", message);
+            close_overlay(app_handle);
+            return;
+        }
+    };
+
+    let handle = app_handle.clone();
+    let history = history.inner().clone();
+    let model = settings.model.clone();
+    let language = settings.language.clone();
+    let base_url = settings.openai_base_url().to_string();
+
+    log::info!("Calling {} API with model={}...", settings.provider, model);
 
     tauri::async_runtime::spawn(async move {
         let lang = if language == "auto" {
@@ -559,7 +570,15 @@ fn stop_and_transcribe(app_handle: &tauri::AppHandle) {
         let result = if is_gemini {
             transcribe::transcribe_gemini(&http_client, &active_key, &model, wav_data, lang).await
         } else {
-            transcribe::transcribe_audio(&http_client, &active_key, &model, wav_data, lang).await
+            transcribe::transcribe_audio(
+                &http_client,
+                &active_key,
+                &model,
+                &base_url,
+                wav_data,
+                lang,
+            )
+            .await
         };
 
         match result {

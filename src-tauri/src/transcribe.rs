@@ -3,17 +3,26 @@ use base64::Engine;
 use reqwest::multipart;
 
 /// Validate API key by sending a tiny silent WAV to the transcription endpoint.
-pub async fn validate_api_key(client: &reqwest::Client, api_key: &str) -> Result<()> {
+pub async fn validate_api_key(
+    client: &reqwest::Client,
+    api_key: &str,
+    model: &str,
+    base_url: &str,
+) -> Result<()> {
+    if model.trim().is_empty() {
+        anyhow::bail!("Model is required");
+    }
+
     let wav = generate_silent_wav();
     let file_part = multipart::Part::bytes(wav)
         .file_name("test.wav")
         .mime_str("audio/wav")?;
     let form = multipart::Form::new()
         .part("file", file_part)
-        .text("model", "whisper-1".to_string());
+        .text("model", model.to_string());
 
     let resp = client
-        .post("https://api.openai.com/v1/audio/transcriptions")
+        .post(openai_transcription_url(base_url)?)
         .bearer_auth(api_key)
         .multipart(form)
         .send()
@@ -58,9 +67,14 @@ pub async fn transcribe_audio(
     client: &reqwest::Client,
     api_key: &str,
     model: &str,
+    base_url: &str,
     wav_data: Vec<u8>,
     language: Option<&str>,
 ) -> Result<String> {
+    if model.trim().is_empty() {
+        anyhow::bail!("Model is required");
+    }
+
     let file_part = multipart::Part::bytes(wav_data)
         .file_name("audio.wav")
         .mime_str("audio/wav")?;
@@ -81,7 +95,7 @@ pub async fn transcribe_audio(
     }
 
     let resp = client
-        .post("https://api.openai.com/v1/audio/transcriptions")
+        .post(openai_transcription_url(base_url)?)
         .bearer_auth(api_key)
         .multipart(form)
         .send()
@@ -101,6 +115,26 @@ pub async fn transcribe_audio(
         .to_string();
 
     Ok(text)
+}
+
+fn openai_transcription_url(base_url: &str) -> Result<String> {
+    let trimmed = base_url.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("Base URL is required");
+    }
+
+    let base = trimmed.trim_end_matches('/');
+    let url = if base.ends_with("/audio/transcriptions") {
+        base.to_string()
+    } else {
+        format!("{}/audio/transcriptions", base)
+    };
+
+    let parsed = reqwest::Url::parse(&url).context("Invalid OpenAI-compatible Base URL")?;
+    match parsed.scheme() {
+        "http" | "https" => Ok(parsed.to_string()),
+        scheme => anyhow::bail!("Unsupported Base URL scheme: {}", scheme),
+    }
 }
 
 // ── Google Gemini (generateContent) ─────────────────────────────────
@@ -132,7 +166,10 @@ pub async fn validate_gemini_api_key(client: &reqwest::Client, api_key: &str) ->
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        if body.contains("API_KEY_INVALID") || body.contains("PERMISSION_DENIED") || status.as_u16() == 401 {
+        if body.contains("API_KEY_INVALID")
+            || body.contains("PERMISSION_DENIED")
+            || status.as_u16() == 401
+        {
             anyhow::bail!("Invalid API key");
         }
         anyhow::bail!("Gemini API error {}: {}", status, body);
@@ -166,7 +203,8 @@ pub async fn transcribe_gemini(
                 lang_name
             )
         }
-        _ => "Transcribe the following audio. Output only the transcribed text, nothing else.".to_string(),
+        _ => "Transcribe the following audio. Output only the transcribed text, nothing else."
+            .to_string(),
     };
 
     let body = serde_json::json!({
@@ -235,5 +273,37 @@ fn language_code_to_name(code: &str) -> &str {
         "fr" => "French",
         "de" => "German",
         _ => code,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::openai_transcription_url;
+
+    #[test]
+    fn builds_transcription_url_from_base_url() {
+        let url = openai_transcription_url("https://api.example.com/v1").unwrap();
+        assert_eq!(url, "https://api.example.com/v1/audio/transcriptions");
+    }
+
+    #[test]
+    fn accepts_full_transcription_endpoint() {
+        let url =
+            openai_transcription_url("https://api.example.com/v1/audio/transcriptions/").unwrap();
+        assert_eq!(url, "https://api.example.com/v1/audio/transcriptions");
+    }
+
+    #[test]
+    fn rejects_empty_base_url() {
+        let err = openai_transcription_url("  ").unwrap_err().to_string();
+        assert!(err.contains("Base URL is required"));
+    }
+
+    #[test]
+    fn rejects_unsupported_base_url_scheme() {
+        let err = openai_transcription_url("socks5://127.0.0.1:1080")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Unsupported Base URL scheme"));
     }
 }

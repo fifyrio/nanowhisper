@@ -21,10 +21,201 @@ const GEMINI_MODELS = [
   { value: "gemini-3-flash-preview", label: "Gemini 3 Flash" },
   { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro" },
 ];
+const PROVIDER_CUSTOM_OPENAI = "custom_openai";
 const DEFAULT_MODELS: Record<string, string> = {
   openai: "gpt-4o-transcribe",
   gemini: "gemini-3-flash-preview",
+  [PROVIDER_CUSTOM_OPENAI]: "whisper-1",
 };
+
+const fieldStyle = {
+  background: "var(--card)",
+  border: "1px solid var(--border)",
+  color: "var(--text)",
+};
+
+function isGeminiProvider(provider: string): boolean {
+  return provider === "gemini";
+}
+
+function isCustomOpenAIProvider(provider: string): boolean {
+  return provider === PROVIDER_CUSTOM_OPENAI;
+}
+
+function activeApiKey(settings: AppSettings): string {
+  if (isGeminiProvider(settings.provider)) return settings.gemini_api_key;
+  if (isCustomOpenAIProvider(settings.provider)) return settings.custom_api_key;
+  return settings.api_key;
+}
+
+function canTestConnection(settings: AppSettings): boolean {
+  if (!activeApiKey(settings).trim() || !settings.model.trim()) return false;
+  if (isCustomOpenAIProvider(settings.provider) && !settings.custom_base_url.trim()) return false;
+  if (settings.proxy_mode === "custom" && !settings.proxy_url.trim()) return false;
+  return true;
+}
+
+function providerKeyLabel(provider: string): string {
+  if (isGeminiProvider(provider)) return "Gemini API Key";
+  if (isCustomOpenAIProvider(provider)) return "API Key";
+  return "OpenAI API Key";
+}
+
+function providerKeyPlaceholder(provider: string): string {
+  if (isGeminiProvider(provider)) return "AIza...";
+  if (isCustomOpenAIProvider(provider)) return "sk-...";
+  return "sk-proj-...";
+}
+
+function ConnectionSettings({
+  settings,
+  onChange,
+  onTest,
+  apiKeyStatus,
+  apiKeyError,
+  primaryTestButton,
+}: {
+  settings: AppSettings;
+  onChange: (patch: Partial<AppSettings>) => void;
+  onTest: () => void;
+  apiKeyStatus: "untested" | "testing" | "ok" | "error";
+  apiKeyError: string | null;
+  primaryTestButton?: boolean;
+}) {
+  const key = activeApiKey(settings);
+  const testable = canTestConnection(settings);
+
+  const updateProvider = (provider: string) => {
+    onChange({
+      provider,
+      model: DEFAULT_MODELS[provider] || "whisper-1",
+    });
+  };
+
+  const updateApiKey = (apiKey: string) => {
+    if (isGeminiProvider(settings.provider)) {
+      onChange({ gemini_api_key: apiKey });
+    } else if (isCustomOpenAIProvider(settings.provider)) {
+      onChange({ custom_api_key: apiKey });
+    } else {
+      onChange({ api_key: apiKey });
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <label className="block text-xs mb-1" style={{ color: "var(--text-secondary)" }}>Provider</label>
+        <select
+          value={settings.provider}
+          onChange={(e) => updateProvider(e.target.value)}
+          className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+          style={fieldStyle}
+        >
+          <option value="openai">OpenAI</option>
+          <option value="gemini">Gemini</option>
+          <option value={PROVIDER_CUSTOM_OPENAI}>OpenAI-compatible</option>
+        </select>
+      </div>
+
+      {isCustomOpenAIProvider(settings.provider) && (
+        <div>
+          <label className="block text-xs mb-1" style={{ color: "var(--text-secondary)" }}>Base URL</label>
+          <input
+            type="url"
+            value={settings.custom_base_url}
+            onChange={(e) => onChange({ custom_base_url: e.target.value })}
+            placeholder="https://api.example.com/v1"
+            className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+            style={fieldStyle}
+          />
+        </div>
+      )}
+
+      <div>
+        <label className="block text-xs mb-1" style={{ color: "var(--text-secondary)" }}>{providerKeyLabel(settings.provider)}</label>
+        <input
+          type="password"
+          value={key}
+          onChange={(e) => updateApiKey(e.target.value)}
+          placeholder={providerKeyPlaceholder(settings.provider)}
+          className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+          style={fieldStyle}
+        />
+      </div>
+
+      <div>
+        <label className="block text-xs mb-1" style={{ color: "var(--text-secondary)" }}>Model</label>
+        {isCustomOpenAIProvider(settings.provider) ? (
+          <input
+            type="text"
+            value={settings.model}
+            onChange={(e) => onChange({ model: e.target.value })}
+            placeholder="whisper-1"
+            className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+            style={fieldStyle}
+          />
+        ) : (
+          <select
+            value={settings.model}
+            onChange={(e) => onChange({ model: e.target.value })}
+            className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+            style={fieldStyle}
+          >
+            {(isGeminiProvider(settings.provider) ? GEMINI_MODELS : OPENAI_MODELS).map((m) => (
+              <option key={m.value} value={m.value}>{m.label}</option>
+            ))}
+          </select>
+        )}
+      </div>
+
+      <div>
+        <label className="block text-xs mb-1" style={{ color: "var(--text-secondary)" }}>Network</label>
+        <select
+          value={settings.proxy_mode}
+          onChange={(e) => onChange({ proxy_mode: e.target.value })}
+          className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+          style={fieldStyle}
+        >
+          <option value="system">System Proxy</option>
+          <option value="disabled">No Proxy</option>
+          <option value="custom">Custom Proxy</option>
+        </select>
+      </div>
+
+      {settings.proxy_mode === "custom" && (
+        <div>
+          <label className="block text-xs mb-1" style={{ color: "var(--text-secondary)" }}>Proxy URL</label>
+          <input
+            type="url"
+            value={settings.proxy_url}
+            onChange={(e) => onChange({ proxy_url: e.target.value })}
+            placeholder="socks5://127.0.0.1:1080"
+            className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+            style={fieldStyle}
+          />
+        </div>
+      )}
+
+      <button
+        onClick={onTest}
+        disabled={!testable || apiKeyStatus === "testing"}
+        className={`w-full px-3 rounded-lg font-medium ${primaryTestButton ? "py-2 text-sm" : "py-1.5 text-xs"}`}
+        style={{
+          background: apiKeyStatus === "ok" ? "#34c75920" : primaryTestButton ? "var(--accent)" : "var(--border)",
+          color: apiKeyStatus === "ok" ? "#34c759" : primaryTestButton ? "white" : "var(--text)",
+          cursor: !testable || apiKeyStatus === "testing" ? "not-allowed" : "pointer",
+          opacity: !testable || apiKeyStatus === "testing" ? 0.5 : 1,
+        }}
+      >
+        {apiKeyStatus === "testing" ? "Testing..." : apiKeyStatus === "ok" ? "Connected" : "Test Connection"}
+      </button>
+      {apiKeyStatus === "error" && apiKeyError && (
+        <p className="text-xs" style={{ color: "#ff453a" }}>{apiKeyError}</p>
+      )}
+    </div>
+  );
+}
 
 function displayShortcut(s: string): string {
   if (!s) return defaultHotkey;
@@ -162,7 +353,7 @@ function App() {
   const loadSettings = useCallback(async () => {
     const s = await invoke<AppSettings>("get_settings");
     setSettings(s);
-    const key = s.provider === "gemini" ? s.gemini_api_key : s.api_key;
+    const key = activeApiKey(s);
     if (!key) setView("onboarding");
   }, []);
 
@@ -264,20 +455,24 @@ function App() {
     await invoke("save_settings", { settings });
   };
 
-  const testApiKey = async (key: string, provider: string) => {
-    if (!key) return;
+  const updateConnectionSettings = (patch: Partial<AppSettings>) => {
+    setSettings((current) => current ? { ...current, ...patch } : current);
+    setApiKeyStatus("untested");
+    setApiKeyError(null);
+  };
+
+  const testConnection = async () => {
+    if (!settings || !canTestConnection(settings)) return;
     setApiKeyStatus("testing");
     setApiKeyError(null);
     try {
-      await invoke("validate_api_key", { apiKey: key, provider });
+      await invoke("validate_api_key", { settings });
       setApiKeyStatus("ok");
     } catch (e) {
       setApiKeyStatus("error");
       setApiKeyError(String(e));
     }
   };
-
-  const activeApiKey = settings ? (settings.provider === "gemini" ? settings.gemini_api_key : settings.api_key) : "";
 
   const formatTime = (ts: number) => {
     const d = new Date(ts * 1000);
@@ -334,63 +529,14 @@ function App() {
               <span className="text-sm font-medium">Speech Provider</span>
               {apiKeyStatus === "ok" && <span style={{ color: "#34c759" }}>&#10003;</span>}
             </div>
-            <select
-              value={settings.provider}
-              onChange={(e) => {
-                const p = e.target.value;
-                setSettings({ ...settings, provider: p, model: DEFAULT_MODELS[p] || "gpt-4o-transcribe" });
-                setApiKeyStatus("untested");
-                setApiKeyError(null);
-              }}
-              className="w-full px-3 py-2 rounded-lg text-sm outline-none mb-2"
-              style={{ background: "var(--card)", border: "1px solid var(--border)", color: "var(--text)" }}
-            >
-              <option value="openai">OpenAI</option>
-              <option value="gemini">Gemini</option>
-            </select>
-            {settings.provider === "gemini" ? (
-              <input
-                type="password"
-                value={settings.gemini_api_key}
-                onChange={(e) => {
-                  setSettings({ ...settings, gemini_api_key: e.target.value });
-                  setApiKeyStatus("untested");
-                  setApiKeyError(null);
-                }}
-                placeholder="AIza..."
-                className="w-full px-3 py-2 rounded-lg text-sm outline-none"
-                style={{ background: "var(--card)", border: "1px solid var(--border)", color: "var(--text)" }}
-              />
-            ) : (
-              <input
-                type="password"
-                value={settings.api_key}
-                onChange={(e) => {
-                  setSettings({ ...settings, api_key: e.target.value });
-                  setApiKeyStatus("untested");
-                  setApiKeyError(null);
-                }}
-                placeholder="sk-proj-..."
-                className="w-full px-3 py-2 rounded-lg text-sm outline-none"
-                style={{ background: "var(--card)", border: "1px solid var(--border)", color: "var(--text)" }}
-              />
-            )}
-            <button
-              onClick={() => testApiKey(activeApiKey, settings.provider)}
-              disabled={!activeApiKey || apiKeyStatus === "testing"}
-              className="w-full mt-2 px-3 py-2 rounded-lg text-sm font-medium"
-              style={{
-                background: apiKeyStatus === "ok" ? "#34c75920" : "var(--accent)",
-                color: apiKeyStatus === "ok" ? "#34c759" : "white",
-                cursor: !activeApiKey || apiKeyStatus === "testing" ? "not-allowed" : "pointer",
-                opacity: !activeApiKey || apiKeyStatus === "testing" ? 0.5 : 1,
-              }}
-            >
-              {apiKeyStatus === "testing" ? "Testing..." : apiKeyStatus === "ok" ? "Connected" : "Test Connection"}
-            </button>
-            {apiKeyStatus === "error" && apiKeyError && (
-              <p className="text-xs mt-1" style={{ color: "#ff453a" }}>{apiKeyError}</p>
-            )}
+            <ConnectionSettings
+              settings={settings}
+              onChange={updateConnectionSettings}
+              onTest={testConnection}
+              apiKeyStatus={apiKeyStatus}
+              apiKeyError={apiKeyError}
+              primaryTestButton
+            />
           </div>
 
           {/* Step 2: Microphone (required) */}
@@ -477,58 +623,13 @@ function App() {
           <button onClick={() => { saveSettings(); setView("history"); }} className="text-sm" style={{ color: "var(--accent)" }}>Done</button>
         </div>
         <div className="space-y-4">
-          <div>
-            <label className="block text-xs mb-1" style={{ color: "var(--text-secondary)" }}>Provider</label>
-            <select value={settings.provider} onChange={(e) => {
-              const p = e.target.value;
-              setSettings({ ...settings, provider: p, model: DEFAULT_MODELS[p] || "gpt-4o-transcribe" });
-              setApiKeyStatus("untested");
-              setApiKeyError(null);
-            }} className="w-full px-3 py-2 rounded-lg text-sm outline-none" style={{ background: "var(--card)", border: "1px solid var(--border)", color: "var(--text)" }}>
-              <option value="openai">OpenAI</option>
-              <option value="gemini">Gemini</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs mb-1" style={{ color: "var(--text-secondary)" }}>{settings.provider === "gemini" ? "Gemini API Key" : "OpenAI API Key"}</label>
-            {settings.provider === "gemini" ? (
-              <input type="password" value={settings.gemini_api_key} onChange={(e) => {
-                setSettings({ ...settings, gemini_api_key: e.target.value });
-                setApiKeyStatus("untested");
-                setApiKeyError(null);
-              }} placeholder="AIza..." className="w-full px-3 py-2 rounded-lg text-sm outline-none" style={{ background: "var(--card)", border: "1px solid var(--border)", color: "var(--text)" }} />
-            ) : (
-              <input type="password" value={settings.api_key} onChange={(e) => {
-                setSettings({ ...settings, api_key: e.target.value });
-                setApiKeyStatus("untested");
-                setApiKeyError(null);
-              }} placeholder="sk-..." className="w-full px-3 py-2 rounded-lg text-sm outline-none" style={{ background: "var(--card)", border: "1px solid var(--border)", color: "var(--text)" }} />
-            )}
-            <button
-              onClick={() => testApiKey(activeApiKey, settings.provider)}
-              disabled={!activeApiKey || apiKeyStatus === "testing"}
-              className="w-full mt-1.5 px-3 py-1.5 rounded-lg text-xs font-medium"
-              style={{
-                background: apiKeyStatus === "ok" ? "#34c75920" : "var(--border)",
-                color: apiKeyStatus === "ok" ? "#34c759" : "var(--text)",
-                cursor: !activeApiKey || apiKeyStatus === "testing" ? "not-allowed" : "pointer",
-                opacity: !activeApiKey || apiKeyStatus === "testing" ? 0.5 : 1,
-              }}
-            >
-              {apiKeyStatus === "testing" ? "Testing..." : apiKeyStatus === "ok" ? "Connected" : "Test Connection"}
-            </button>
-            {apiKeyStatus === "error" && apiKeyError && (
-              <p className="text-xs mt-1" style={{ color: "#ff453a" }}>{apiKeyError}</p>
-            )}
-          </div>
-          <div>
-            <label className="block text-xs mb-1" style={{ color: "var(--text-secondary)" }}>Model</label>
-            <select value={settings.model} onChange={(e) => setSettings({ ...settings, model: e.target.value })} className="w-full px-3 py-2 rounded-lg text-sm outline-none" style={{ background: "var(--card)", border: "1px solid var(--border)", color: "var(--text)" }}>
-              {(settings.provider === "gemini" ? GEMINI_MODELS : OPENAI_MODELS).map((m) => (
-                <option key={m.value} value={m.value}>{m.label}</option>
-              ))}
-            </select>
-          </div>
+          <ConnectionSettings
+            settings={settings}
+            onChange={updateConnectionSettings}
+            onTest={testConnection}
+            apiKeyStatus={apiKeyStatus}
+            apiKeyError={apiKeyError}
+          />
           <div>
             <label className="block text-xs mb-1" style={{ color: "var(--text-secondary)" }}>Language</label>
             <select value={settings.language} onChange={(e) => setSettings({ ...settings, language: e.target.value })} className="w-full px-3 py-2 rounded-lg text-sm outline-none" style={{ background: "var(--card)", border: "1px solid var(--border)", color: "var(--text)" }}>

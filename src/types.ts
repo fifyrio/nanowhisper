@@ -11,10 +11,14 @@ export interface AppSettings {
   provider: string;
   api_key: string;
   gemini_api_key: string;
+  custom_api_key: string;
+  custom_base_url: string;
   model: string;
   language: string;
+  proxy_mode: string;
+  proxy_url: string;
   shortcut: string;
   sound_enabled: boolean;
-  overlay_x: number | null;
-  overlay_y: number | null;
+  overlay_rx: number | null;
+  overlay_ry: number | null;
 }

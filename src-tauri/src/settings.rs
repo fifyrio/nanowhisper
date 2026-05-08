@@ -1,6 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+pub const PROVIDER_OPENAI: &str = "openai";
+pub const PROVIDER_GEMINI: &str = "gemini";
+pub const PROVIDER_CUSTOM_OPENAI: &str = "custom_openai";
+pub const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     #[serde(default = "default_provider")]
@@ -9,10 +14,18 @@ pub struct AppSettings {
     pub api_key: String,
     #[serde(default)]
     pub gemini_api_key: String,
+    #[serde(default)]
+    pub custom_api_key: String,
+    #[serde(default)]
+    pub custom_base_url: String,
     #[serde(default = "default_model")]
     pub model: String,
     #[serde(default = "default_language")]
     pub language: String,
+    #[serde(default = "default_proxy_mode")]
+    pub proxy_mode: String,
+    #[serde(default)]
+    pub proxy_url: String,
     #[serde(default = "default_shortcut")]
     pub shortcut: String,
     #[serde(default = "default_sound_enabled")]
@@ -24,7 +37,7 @@ pub struct AppSettings {
 }
 
 fn default_provider() -> String {
-    "openai".to_string()
+    PROVIDER_OPENAI.to_string()
 }
 fn default_api_key() -> String {
     String::new()
@@ -34,6 +47,9 @@ fn default_model() -> String {
 }
 fn default_language() -> String {
     "auto".to_string()
+}
+fn default_proxy_mode() -> String {
+    "system".to_string()
 }
 fn default_shortcut() -> String {
     String::new()
@@ -48,12 +64,42 @@ impl Default for AppSettings {
             provider: default_provider(),
             api_key: default_api_key(),
             gemini_api_key: String::new(),
+            custom_api_key: String::new(),
+            custom_base_url: String::new(),
             model: default_model(),
             language: default_language(),
+            proxy_mode: default_proxy_mode(),
+            proxy_url: String::new(),
             shortcut: default_shortcut(),
             sound_enabled: default_sound_enabled(),
             overlay_rx: None,
             overlay_ry: None,
+        }
+    }
+}
+
+impl AppSettings {
+    pub fn is_gemini(&self) -> bool {
+        self.provider == PROVIDER_GEMINI
+    }
+
+    pub fn is_custom_openai(&self) -> bool {
+        self.provider == PROVIDER_CUSTOM_OPENAI
+    }
+
+    pub fn active_api_key(&self) -> &str {
+        match self.provider.as_str() {
+            PROVIDER_GEMINI => &self.gemini_api_key,
+            PROVIDER_CUSTOM_OPENAI => &self.custom_api_key,
+            _ => &self.api_key,
+        }
+    }
+
+    pub fn openai_base_url(&self) -> &str {
+        if self.is_custom_openai() {
+            &self.custom_base_url
+        } else {
+            DEFAULT_OPENAI_BASE_URL
         }
     }
 }
