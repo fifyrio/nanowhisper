@@ -1,0 +1,70 @@
+# Diagnoses Azure Trusted Signing failures without running a full release build.
+# Run manually: gh workflow run diag-win-signing.yml
+name: Diag Windows Signing
+
+on: workflow_dispatch
+
+jobs:
+  diag:
+    runs-on: windows-latest
+    env:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+    steps:
+      - name: Azure AD token check (EnvironmentCredential path)
+        shell: pwsh
+        run: |
+          $body = @{
+            grant_type    = "client_credentials"
+            client_id     = $env:AZURE_CLIENT_ID
+            client_secret = $env:AZURE_CLIENT_SECRET
+            scope         = "https://codesigning.azure.net/.default"
+          }
+          try {
+            $resp = Invoke-RestMethod -Method Post -Body $body `
+              -Uri "https://login.microsoftonline.com/$env:AZURE_TENANT_ID/oauth2/v2.0/token"
+            Write-Host "TOKEN OK (expires_in=$($resp.expires_in)s)"
+          } catch {
+            Write-Host "TOKEN FAILED:"
+            Write-Host $_.ErrorDetails.Message
+          }
+
+      - name: Run signtool + dlib against a test binary
+        shell: pwsh
+        run: |
+          # Mirror the exact setup from release.yml "Setup Windows code signing"
+          Invoke-WebRequest -Uri https://dist.nuget.org/win-x86-commandline/v6.12.1/nuget.exe -OutFile "$env:RUNNER_TEMP\nuget.exe"
+          & "$env:RUNNER_TEMP\nuget.exe" install Microsoft.ArtifactSigning.Client -Version 1.0.115 -ExcludeVersion -OutputDirectory "$env:RUNNER_TEMP\signing" | Out-Null
+
+          $dlib = "$env:RUNNER_TEMP\signing\Microsoft.ArtifactSigning.Client\bin\x64\Azure.CodeSigning.Dlib.dll"
+          if (!(Test-Path $dlib)) { throw "Azure.CodeSigning.Dlib.dll not found" }
+
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter "signtool.exe" |
+            Where-Object { $_.FullName -like "*\x64\*" } |
+            Sort-Object { [version]($_.Directory.Parent.Name) } -Descending |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (!$signtool) { throw "signtool.exe not found" }
+          Write-Host "signtool: $signtool"
+
+          $metadata = "$env:RUNNER_TEMP\metadata.json"
+          @{
+            Endpoint = "https://eus.codesigning.azure.net"
+            CodeSigningAccountName = "golemancy"
+            CertificateProfileName = "golemancy"
+            ExcludeCredentials = @(
+              "ManagedIdentityCredential",
+              "WorkloadIdentityCredential",
+              "SharedTokenCacheCredential",
+              "VisualStudioCredential",
+              "VisualStudioCodeCredential",
+              "AzureCliCredential",
+              "AzurePowerShellCredential",
+              "AzureDeveloperCliCredential",
+              "InteractiveBrowserCredential"
+            )
+          } | ConvertTo-Json | Out-File -Encoding utf8 $metadata
+
+          Copy-Item "C:\Windows\System32\where.exe" "$env:RUNNER_TEMP\test-sign.exe"
+          & $signtool sign /v /debug /fd SHA256 /tr "http://timestamp.acs.microsoft.com" /td SHA256 /dlib $dlib /dmdf $metadata "$env:RUNNER_TEMP\test-sign.exe"
+          Write-Host "signtool exit code: $LASTEXITCODE"
