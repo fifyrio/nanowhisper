@@ -30,6 +30,40 @@ jobs:
             Write-Host $_.ErrorDetails.Message
           }
 
+      - name: Query Trusted Signing account status via ARM
+        shell: pwsh
+        run: |
+          $tok = Invoke-RestMethod -Method Post -Body @{
+            grant_type    = "client_credentials"
+            client_id     = $env:AZURE_CLIENT_ID
+            client_secret = $env:AZURE_CLIENT_SECRET
+            scope         = "https://management.azure.com/.default"
+          } -Uri "https://login.microsoftonline.com/$env:AZURE_TENANT_ID/oauth2/v2.0/token"
+          $h = @{ Authorization = "Bearer $($tok.access_token)" }
+
+          try {
+            $subs = Invoke-RestMethod -Headers $h -Uri "https://management.azure.com/subscriptions?api-version=2022-12-01"
+          } catch {
+            Write-Host "Cannot list subscriptions: $($_.ErrorDetails.Message)"
+            exit 0
+          }
+          foreach ($s in $subs.value) {
+            Write-Host "Subscription: $($s.displayName) [$($s.subscriptionId)] state=$($s.state)"
+            try {
+              $prov = Invoke-RestMethod -Headers $h -Uri "https://management.azure.com/subscriptions/$($s.subscriptionId)/providers/Microsoft.CodeSigning?api-version=2022-12-01"
+              $apiVer = ($prov.resourceTypes | Where-Object { $_.resourceType -eq "codeSigningAccounts" }).apiVersions[0]
+              Write-Host "Using api-version: $apiVer"
+              $accts = Invoke-RestMethod -Headers $h -Uri "https://management.azure.com/subscriptions/$($s.subscriptionId)/providers/Microsoft.CodeSigning/codeSigningAccounts?api-version=$apiVer"
+              foreach ($a in $accts.value) {
+                Write-Host ($a | ConvertTo-Json -Depth 5)
+                $profiles = Invoke-RestMethod -Headers $h -Uri "https://management.azure.com$($a.id)/certificateProfiles?api-version=$apiVer"
+                Write-Host ($profiles | ConvertTo-Json -Depth 6)
+              }
+            } catch {
+              Write-Host "Query failed: $($_.ErrorDetails.Message)"
+            }
+          }
+
       - name: Run signtool + dlib against a test binary
         shell: pwsh
         run: |
