@@ -30,6 +30,10 @@ pub struct AppSettings {
     pub shortcut: String,
     #[serde(default = "default_sound_enabled")]
     pub sound_enabled: bool,
+    /// Minimum macOS mic input gain (0–100) to restore at recording start.
+    /// 0 disables the feature. See `mic_gain::ensure_min_gain`.
+    #[serde(default = "default_mic_min_gain")]
+    pub mic_min_gain: u8,
     #[serde(default)]
     pub overlay_rx: Option<f64>,
     #[serde(default)]
@@ -57,6 +61,9 @@ fn default_shortcut() -> String {
 fn default_sound_enabled() -> bool {
     true
 }
+fn default_mic_min_gain() -> u8 {
+    85
+}
 
 impl Default for AppSettings {
     fn default() -> Self {
@@ -72,6 +79,7 @@ impl Default for AppSettings {
             proxy_url: String::new(),
             shortcut: default_shortcut(),
             sound_enabled: default_sound_enabled(),
+            mic_min_gain: default_mic_min_gain(),
             overlay_rx: None,
             overlay_ry: None,
         }

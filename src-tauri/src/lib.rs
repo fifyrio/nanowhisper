@@ -2,6 +2,7 @@ mod commands;
 mod history;
 mod hotkey;
 mod http;
+mod mic_gain;
 pub mod paste;
 mod permissions;
 mod recorder;
@@ -447,6 +448,10 @@ fn start_recording(app_handle: &tauri::AppHandle) {
     if saved.sound_enabled {
         sound::play_start_sound();
     }
+
+    // Rescue mic input gain — other apps (e.g. WeChat) silently lower the
+    // system input volume, shrinking the waveform and hurting accuracy.
+    mic_gain::ensure_min_gain(saved.mic_min_gain);
 
     if let Err(e) = recorder.start(app_handle.clone()) {
         log::error!("Failed to start recording: {}", e);

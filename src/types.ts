@@ -19,6 +19,7 @@ export interface AppSettings {
   proxy_url: string;
   shortcut: string;
   sound_enabled: boolean;
+  mic_min_gain: number;
   overlay_rx: number | null;
   overlay_ry: number | null;
 }

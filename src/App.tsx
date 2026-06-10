@@ -659,6 +659,26 @@ function App() {
               </button>
             </div>
           </div>
+          {isMac && (
+            <div>
+              <div className="flex items-center justify-between">
+                <label className="block text-xs" style={{ color: "var(--text-secondary)" }}>Auto-Restore Mic Volume</label>
+                <button
+                  onClick={() => setSettings({ ...settings, mic_min_gain: settings.mic_min_gain > 0 ? 0 : 85 })}
+                  className="relative w-10 h-5 rounded-full transition-colors"
+                  style={{ background: settings.mic_min_gain > 0 ? "var(--accent)" : "var(--border)" }}
+                >
+                  <span
+                    className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform"
+                    style={{ left: settings.mic_min_gain > 0 ? "calc(100% - 18px)" : "2px" }}
+                  />
+                </button>
+              </div>
+              <p className="text-xs mt-1" style={{ color: "var(--text-secondary)", opacity: 0.7 }}>
+                Raises system mic input gain at recording start when another app (e.g. WeChat) lowered it
+              </p>
+            </div>
+          )}
           <div>
             <label className="block text-xs mb-1" style={{ color: "var(--text-secondary)" }}>Shortcut</label>
             <p className="text-xs mb-1.5" style={{ color: "var(--text-secondary)" }}>
