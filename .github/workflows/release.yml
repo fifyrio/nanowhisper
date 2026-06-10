@@ -44,9 +44,12 @@ jobs:
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             artifact: release-linux-x64
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact: release-win-x64
+          # Windows temporarily disabled: Azure Trusted Signing returns 403
+          # (identity validation expired — renew in Azure portal, then restore).
+          # See .github/workflows/diag-win-signing.yml for diagnostics.
+          # - os: windows-latest
+          #   target: x86_64-pc-windows-msvc
+          #   artifact: release-win-x64
 
     runs-on: ${{ matrix.os }}
     name: Build (${{ matrix.artifact }})
@@ -402,7 +405,7 @@ jobs:
 
           # Generate latest.json with Python — robust against special chars in signatures
           python3 << 'PYSCRIPT'
-          import glob, json, os
+          import glob, json, os, sys
           from datetime import datetime, timezone
 
           version = os.environ["TAG"].lstrip("v")
@@ -416,7 +419,8 @@ jobs:
               "darwin-aarch64": "*_aarch64.app.tar.gz",
               "darwin-x86_64":  "*_x64.app.tar.gz",
               "linux-x86_64":   "*.AppImage",
-              "windows-x86_64": "*-setup.exe",
+              # Windows temporarily disabled (see build matrix comment)
+              # "windows-x86_64": "*-setup.exe",
           }
 
           platforms = {}
@@ -478,11 +482,8 @@ jobs:
             | `.dmg` (arm64) | Apple Silicon (M1/M2/M3/M4) — **Recommended** |
             | `.dmg` (x64) | Intel (pre-2021 Macs) |
 
-            ### Windows (signed)
-            | File | Note |
-            |------|------|
-            | `.exe` | **Recommended** — NSIS installer |
-            | `.msi` | Enterprise / IT deployment |
+            ### Windows
+            Temporarily unavailable in this release — please use [v0.1.29](https://github.com/jicaiinc/nanowhisper/releases/tag/v0.1.29). Windows builds will return in the next release.
 
             ### Linux
             | File | Distros |
