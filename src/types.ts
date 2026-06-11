@@ -5,6 +5,13 @@ export interface HistoryEntry {
   timestamp: number;
   duration_ms: number | null;
   audio_path: string | null;
+  /** Recording start time in epoch ms; timestamp is transcription completion */
+  started_at: number | null;
+}
+
+export interface StorageStats {
+  count: number;
+  audio_bytes: number;
 }
 
 export interface AppSettings {

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import type { HistoryEntry, AppSettings } from "./types";
+import type { HistoryEntry, AppSettings, StorageStats } from "./types";
 import logoUrl from "./assets/logo.png";
 
 type View = "onboarding" | "history" | "settings";
@@ -344,6 +344,9 @@ function App() {
   const [apiKeyError, setApiKeyError] = useState<string | null>(null);
   const [updateVersion, setUpdateVersion] = useState<string | null>(null);
   const [updateBlocked, setUpdateBlocked] = useState(false);
+  const [storageStats, setStorageStats] = useState<StorageStats | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [clearing, setClearing] = useState(false);
 
   const loadHistory = useCallback(async () => {
     const entries = await invoke<HistoryEntry[]>("get_history");
@@ -403,6 +406,33 @@ function App() {
       unlisten3.then((f) => f());
     };
   }, [loadHistory, loadSettings, checkPermissions]);
+
+  // Refresh storage stats whenever the Settings view opens
+  useEffect(() => {
+    if (view !== "settings") return;
+    invoke<StorageStats>("get_storage_stats").then(setStorageStats).catch(() => {});
+  }, [view]);
+
+  const handleClearAll = async () => {
+    setClearing(true);
+    try {
+      await invoke("clear_history");
+      await loadHistory();
+      const s = await invoke<StorageStats>("get_storage_stats");
+      setStorageStats(s);
+    } catch (e) {
+      console.error("Clear history failed:", e);
+    }
+    setClearing(false);
+    setConfirmClear(false);
+  };
+
+  const formatBytes = (b: number) => {
+    if (b < 1024) return `${b} B`;
+    if (b < 1024 ** 2) return `${(b / 1024).toFixed(0)} KB`;
+    if (b < 1024 ** 3) return `${(b / 1024 ** 2).toFixed(1)} MB`;
+    return `${(b / 1024 ** 3).toFixed(2)} GB`;
+  };
 
   // Poll permissions only until all granted
   useEffect(() => {
@@ -719,8 +749,56 @@ function App() {
               </button>
             )}
           </div>
+          <div>
+            <label className="block text-xs mb-1" style={{ color: "var(--text-secondary)" }}>Storage</label>
+            <div className="px-3 py-2 rounded-lg text-sm flex items-center justify-between" style={fieldStyle}>
+              <span style={{ color: "var(--text-secondary)" }}>
+                {storageStats
+                  ? `${storageStats.count} transcription${storageStats.count === 1 ? "" : "s"} · ${formatBytes(storageStats.audio_bytes)}`
+                  : "Calculating..."}
+              </span>
+              {storageStats !== null && storageStats.count > 0 && (
+                <button
+                  onClick={() => setConfirmClear(true)}
+                  className="text-xs font-medium"
+                  style={{ color: "#ff453a" }}
+                >
+                  Clear All...
+                </button>
+              )}
+            </div>
+          </div>
           <p className="text-center text-xs pt-2" style={{ color: "var(--text-secondary)", opacity: 0.5 }}>v{__APP_VERSION__}</p>
         </div>
+
+        {confirmClear && (
+          <div className="fixed inset-0 flex items-center justify-center" style={{ background: "rgba(0, 0, 0, 0.4)", zIndex: 50 }}>
+            <div className="rounded-xl p-4 mx-6 w-full" style={{ background: "var(--bg)", border: "1px solid var(--border)", maxWidth: "300px" }}>
+              <h2 className="text-sm font-semibold mb-1">Delete all transcriptions?</h2>
+              <p className="text-xs mb-4" style={{ color: "var(--text-secondary)" }}>
+                This deletes {storageStats?.count} transcriptions and {formatBytes(storageStats?.audio_bytes ?? 0)} of audio files. This cannot be undone. Your settings are not affected.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setConfirmClear(false)}
+                  disabled={clearing}
+                  className="flex-1 py-2 rounded-lg text-sm font-medium"
+                  style={{ background: "var(--border)", color: "var(--text)" }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleClearAll}
+                  disabled={clearing}
+                  className="flex-1 py-2 rounded-lg text-sm font-medium"
+                  style={{ background: "#ff453a", color: "white", opacity: clearing ? 0.6 : 1 }}
+                >
+                  {clearing ? "Deleting..." : "Delete All"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -804,7 +882,7 @@ function App() {
                     </span>
                   ) : null}
                   <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
-                    {formatTime(entry.timestamp)}
+                    {formatTime(entry.started_at ? Math.floor(entry.started_at / 1000) : entry.timestamp)}
                   </span>
                 </div>
                 <div className="flex gap-0.5">

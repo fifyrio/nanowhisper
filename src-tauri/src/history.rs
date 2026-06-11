@@ -16,6 +16,7 @@ static MIGRATIONS: &[M] = &[
         );",
     ),
     M::up("ALTER TABLE transcriptions ADD COLUMN audio_path TEXT;"),
+    M::up("ALTER TABLE transcriptions ADD COLUMN started_at INTEGER;"),
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -26,6 +27,10 @@ pub struct HistoryEntry {
     pub timestamp: i64,
     pub duration_ms: Option<i64>,
     pub audio_path: Option<String>,
+    /// Recording start time in epoch milliseconds. `timestamp` is the
+    /// transcription completion time; ordering by `started_at` keeps the
+    /// list in speaking order even when transcriptions finish out of order.
+    pub started_at: Option<i64>,
 }
 
 pub struct HistoryManager {
@@ -64,12 +69,13 @@ impl HistoryManager {
         model: &str,
         duration_ms: Option<i64>,
         audio_path: Option<&str>,
+        started_at: Option<i64>,
     ) -> Result<HistoryEntry> {
         let conn = self.conn.lock().unwrap();
         let timestamp = chrono::Utc::now().timestamp();
         conn.execute(
-            "INSERT INTO transcriptions (text, model, timestamp, duration_ms, audio_path) VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![text, model, timestamp, duration_ms, audio_path],
+            "INSERT INTO transcriptions (text, model, timestamp, duration_ms, audio_path, started_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![text, model, timestamp, duration_ms, audio_path, started_at],
         )?;
         let id = conn.last_insert_rowid();
         Ok(HistoryEntry {
@@ -79,13 +85,14 @@ impl HistoryManager {
             timestamp,
             duration_ms,
             audio_path: audio_path.map(|s| s.to_string()),
+            started_at,
         })
     }
 
     pub fn get_entry_by_id(&self, id: i64) -> Result<Option<HistoryEntry>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, text, model, timestamp, duration_ms, audio_path FROM transcriptions WHERE id = ?1",
+            "SELECT id, text, model, timestamp, duration_ms, audio_path, started_at FROM transcriptions WHERE id = ?1",
         )?;
         let entry = stmt
             .query_row([id], |row| {
@@ -96,6 +103,7 @@ impl HistoryManager {
                     timestamp: row.get(3)?,
                     duration_ms: row.get(4)?,
                     audio_path: row.get(5)?,
+                    started_at: row.get(6)?,
                 })
             })
             .ok();
@@ -114,8 +122,9 @@ impl HistoryManager {
 
     pub fn get_entries(&self) -> Result<Vec<HistoryEntry>> {
         let conn = self.conn.lock().unwrap();
+        // started_at is in ms, timestamp in seconds — scale for the fallback
         let mut stmt = conn.prepare(
-            "SELECT id, text, model, timestamp, duration_ms, audio_path FROM transcriptions ORDER BY timestamp DESC",
+            "SELECT id, text, model, timestamp, duration_ms, audio_path, started_at FROM transcriptions ORDER BY COALESCE(started_at, timestamp * 1000) DESC, id DESC",
         )?;
         let entries = stmt
             .query_map([], |row| {
@@ -126,10 +135,17 @@ impl HistoryManager {
                     timestamp: row.get(3)?,
                     duration_ms: row.get(4)?,
                     audio_path: row.get(5)?,
+                    started_at: row.get(6)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(entries)
+    }
+
+    pub fn entry_count(&self) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        let count = conn.query_row("SELECT COUNT(*) FROM transcriptions", [], |row| row.get(0))?;
+        Ok(count)
     }
 
     pub fn delete_entry(&self, id: i64) -> Result<()> {

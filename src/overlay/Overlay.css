@@ -10,7 +10,7 @@
     --overlay-fg: rgba(255, 255, 255, 0.8);
     --overlay-dot: rgba(255, 255, 255, 0.8);
   }
-  .overlay-body {
+  .overlay-row {
     box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.1), 0 1px 3px rgba(0, 0, 0, 0.2);
   }
 }
@@ -24,22 +24,64 @@ html, body {
   height: 100%;
 }
 
-.overlay-body {
+/* Bottom-aligned stack: the newest session is the last row, sitting at the
+   bottom; older (transcribing) rows are pushed upward as new ones arrive.
+   The window itself grows upward from a fixed bottom anchor (see lib.rs). */
+.overlay-stack {
   position: fixed;
   inset: 0;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--overlay-bg);
-  border-radius: 14px;
-  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.06);
+  flex-direction: column;
+  justify-content: flex-end;
   cursor: grab;
   user-select: none;
   -webkit-user-select: none;
 }
 
-.overlay-body:active {
+.overlay-stack:active {
   cursor: grabbing;
+}
+
+/* Row height (48px) and gap (10px) must match ROW_HEIGHT / ROW_GAP in
+   src-tauri/src/overlay.rs */
+.overlay-row {
+  height: 48px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--overlay-bg);
+  border-radius: 14px;
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.overlay-row:not(:first-child) {
+  margin-top: 10px;
+}
+
+/* New row unfolds from the bottom, pushing the rows above it upward */
+.row-enter {
+  animation: rowIn 180ms ease-out;
+}
+
+.row-enter:not(:first-child) {
+  animation-name: rowInGap;
+}
+
+@keyframes rowIn {
+  from {
+    height: 0;
+    opacity: 0;
+  }
+}
+
+@keyframes rowInGap {
+  from {
+    height: 0;
+    margin-top: 0;
+    opacity: 0;
+  }
 }
 
 .wave-canvas {

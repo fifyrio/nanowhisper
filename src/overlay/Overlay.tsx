@@ -3,7 +3,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
-type OverlayState = "recording" | "transcribing";
+type SessionStatus = "recording" | "transcribing";
+
+interface SessionInfo {
+  id: number;
+  status: SessionStatus;
+}
 
 const COL_WIDTH = 3;
 const COL_GAP = 2;
@@ -11,57 +16,15 @@ const CANVAS_HEIGHT = 32;
 const SAMPLE_EVERY_N_FRAMES = 3;
 const AMPLITUDE_SCALE = 8;
 
-function Overlay() {
-  const [state, setState] = useState<OverlayState>("recording");
-  const levelRef = useRef(0);
+function WaveCanvas({ levelRef }: { levelRef: React.MutableRefObject<number> }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const historyRef = useRef<number[]>([]);
   const frameCountRef = useRef(0);
   const animRef = useRef<number>(0);
-  const saveTimerRef = useRef<number>(0);
-
-  useEffect(() => {
-    const unlisten1 = listen<number>("audio-level", (e) => {
-      levelRef.current = e.payload;
-    });
-    const unlisten2 = listen("transcribing", () => {
-      setState("transcribing");
-    });
-    return () => {
-      unlisten1.then((f) => f());
-      unlisten2.then((f) => f());
-    };
-  }, []);
-
-  // Persist overlay position on drag (debounced)
-  useEffect(() => {
-    const currentWindow = getCurrentWindow();
-    const unlisten = currentWindow.onMoved(async () => {
-      clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = window.setTimeout(async () => {
-        try {
-          const [pos, scale] = await Promise.all([
-            currentWindow.outerPosition(),
-            currentWindow.scaleFactor(),
-          ]);
-          invoke("save_overlay_position", {
-            x: pos.x / scale,
-            y: pos.y / scale,
-          });
-        } catch {
-          // ignore errors during window close
-        }
-      }, 300);
-    });
-    return () => {
-      unlisten.then((f) => f());
-      clearTimeout(saveTimerRef.current);
-    };
-  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || state !== "recording") return;
+    if (!canvas) return;
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
@@ -117,7 +80,86 @@ function Overlay() {
 
     draw();
     return () => cancelAnimationFrame(animRef.current);
-  }, [state]);
+  }, [levelRef]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className="wave-canvas"
+      style={{ width: 280, height: CANVAS_HEIGHT }}
+    />
+  );
+}
+
+function TranscribingDots() {
+  return (
+    <div className="transcribing-dots" style={{ width: 280, height: CANVAS_HEIGHT }}>
+      <span className="dot" />
+      <span className="dot" />
+      <span className="dot" />
+      <span className="dot" />
+      <span className="dot" />
+    </div>
+  );
+}
+
+function Overlay() {
+  const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const levelRef = useRef(0);
+  // Ids already rendered — rows animate in only when joining an existing stack
+  const seenIdsRef = useRef<Set<number>>(new Set());
+  const saveTimerRef = useRef<number>(0);
+
+  useEffect(() => {
+    let disposed = false;
+    // The window is created before events flow; fetch the current rows first
+    invoke<SessionInfo[]>("get_overlay_sessions")
+      .then((s) => {
+        if (!disposed) {
+          s.forEach((x) => seenIdsRef.current.add(x.id));
+          setSessions(s);
+        }
+      })
+      .catch(() => {});
+
+    const unlisten1 = listen<number>("audio-level", (e) => {
+      levelRef.current = e.payload;
+    });
+    const unlisten2 = listen<SessionInfo[]>("overlay-sessions", (e) => {
+      setSessions(e.payload);
+    });
+    return () => {
+      disposed = true;
+      unlisten1.then((f) => f());
+      unlisten2.then((f) => f());
+    };
+  }, []);
+
+  // Persist overlay position on drag (debounced)
+  useEffect(() => {
+    const currentWindow = getCurrentWindow();
+    const unlisten = currentWindow.onMoved(async () => {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = window.setTimeout(async () => {
+        try {
+          const [pos, scale] = await Promise.all([
+            currentWindow.outerPosition(),
+            currentWindow.scaleFactor(),
+          ]);
+          invoke("save_overlay_position", {
+            x: pos.x / scale,
+            y: pos.y / scale,
+          });
+        } catch {
+          // ignore errors during window close
+        }
+      }, 300);
+    });
+    return () => {
+      unlisten.then((f) => f());
+      clearTimeout(saveTimerRef.current);
+    };
+  }, []);
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button === 0) {
@@ -125,23 +167,29 @@ function Overlay() {
     }
   };
 
+  const newIds = sessions.filter((s) => !seenIdsRef.current.has(s.id));
+  // A row animates in only when it pushes existing rows up; the very first
+  // row appears together with the window itself, so no animation there.
+  const animateNew = sessions.length > 1 && newIds.length > 0;
+  newIds.forEach((s) => seenIdsRef.current.add(s.id));
+
   return (
-    <div className="overlay-body" onPointerDown={handlePointerDown}>
-      {state === "transcribing" ? (
-        <div className="transcribing-dots" style={{ width: 280, height: CANVAS_HEIGHT }}>
-          <span className="dot" />
-          <span className="dot" />
-          <span className="dot" />
-          <span className="dot" />
-          <span className="dot" />
+    <div className="overlay-stack" onPointerDown={handlePointerDown}>
+      {sessions.map((s) => (
+        <div
+          key={s.id}
+          className={
+            "overlay-row" +
+            (animateNew && newIds.some((n) => n.id === s.id) ? " row-enter" : "")
+          }
+        >
+          {s.status === "recording" ? (
+            <WaveCanvas levelRef={levelRef} />
+          ) : (
+            <TranscribingDots />
+          )}
         </div>
-      ) : (
-        <canvas
-          ref={canvasRef}
-          className="wave-canvas"
-          style={{ width: 280, height: CANVAS_HEIGHT }}
-        />
-      )}
+      ))}
     </div>
   );
 }

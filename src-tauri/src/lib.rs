@@ -3,6 +3,7 @@ mod history;
 mod hotkey;
 mod http;
 mod mic_gain;
+pub mod overlay;
 pub mod paste;
 mod permissions;
 mod recorder;
@@ -12,6 +13,7 @@ mod transcribe;
 mod updater;
 
 use history::HistoryManager;
+use overlay::OverlaySessions;
 use recorder::{downsample_audio, encode_wav, AudioRecorder};
 use settings::AppSettings;
 use std::path::PathBuf;
@@ -30,7 +32,6 @@ pub fn data_dir() -> PathBuf {
 
 // Named constants
 const OVERLAY_WIDTH: f64 = 320.0;
-const OVERLAY_HEIGHT: f64 = 48.0;
 const OVERLAY_BOTTOM_OFFSET: f64 = 80.0;
 const PASTE_DELAY_MS: u64 = 350;
 
@@ -152,6 +153,7 @@ pub fn run() {
             commands::get_history,
             commands::delete_history_entry,
             commands::clear_history,
+            commands::get_storage_stats,
             commands::get_settings,
             commands::save_settings,
             commands::check_accessibility,
@@ -162,6 +164,7 @@ pub fn run() {
             commands::validate_api_key,
             commands::retry_transcription,
             commands::save_overlay_position,
+            commands::get_overlay_sessions,
             commands::pause_shortcut,
             commands::resume_shortcut,
             commands::check_for_update,
@@ -178,6 +181,9 @@ pub fn run() {
             // Initialize audio recorder
             let recorder = Arc::new(AudioRecorder::new());
             app.manage(recorder.clone());
+
+            // Overlay session tracker (stacked recording/transcribing rows)
+            app.manage(Arc::new(OverlaySessions::new()));
 
             // Initialize enigo if accessibility is already granted
             if paste::is_accessibility_trusted() {
@@ -402,19 +408,105 @@ fn toggle_recording(app_handle: &tauri::AppHandle) {
 
 fn start_recording(app_handle: &tauri::AppHandle) {
     let recorder = app_handle.state::<Arc<AudioRecorder>>();
+    let sessions = app_handle.state::<Arc<OverlaySessions>>();
 
     let saved = settings::get_settings();
-    let (sx, sy, sw, sh) = cursor_screen_bounds(app_handle);
-    let (pos_x, pos_y) = if let (Some(rx), Some(ry)) = (saved.overlay_rx, saved.overlay_ry) {
-        (sx + rx * sw, sy + ry * sh)
-    } else {
-        (sx + (sw - OVERLAY_WIDTH) / 2.0, sy + sh - OVERLAY_HEIGHT - OVERLAY_BOTTOM_OFFSET)
-    };
 
     // Hide main window to prevent it from appearing when overlay activates the app
     if let Some(w) = app_handle.get_webview_window("main") {
         let _ = w.hide();
     }
+
+    // Register the session first, then reconcile the window (create or grow)
+    let session_id = sessions.start();
+    sync_overlay(app_handle);
+
+    // Play start sound BEFORE opening mic (blocking) so it won't be recorded
+    if saved.sound_enabled {
+        sound::play_start_sound();
+    }
+
+    // Rescue mic input gain — other apps (e.g. WeChat) silently lower the
+    // system input volume, shrinking the waveform and hurting accuracy.
+    mic_gain::ensure_min_gain(saved.mic_min_gain);
+
+    if let Err(e) = recorder.start(app_handle.clone()) {
+        log::error!("Failed to start recording: {}", e);
+        sessions.take_recording();
+        end_overlay_session(app_handle, Some(session_id));
+        return;
+    }
+    log::info!("Recording started (session {})", session_id);
+
+    // Register Escape only while recording
+    register_escape(app_handle);
+}
+
+/// Reconcile the overlay window with the session list: create it for the
+/// first session, grow/shrink bottom-anchored as rows come and go, close it
+/// when the last session ends. Emits the current rows to the frontend.
+fn sync_overlay(app_handle: &tauri::AppHandle) {
+    let sessions = app_handle.state::<Arc<OverlaySessions>>();
+    let snapshot = sessions.snapshot();
+    let rows = snapshot.len();
+
+    if rows == 0 {
+        close_overlay(app_handle);
+        return;
+    }
+
+    if let Some(w) = app_handle.get_webview_window("overlay") {
+        let new_h = overlay::overlay_height(rows);
+        if let (Ok(scale), Ok(pos), Ok(size)) =
+            (w.scale_factor(), w.outer_position(), w.outer_size())
+        {
+            let pos = pos.to_logical::<f64>(scale);
+            let size = size.to_logical::<f64>(scale);
+            if (size.height - new_h).abs() > 1.0 {
+                // Keep the bottom edge anchored: the stack grows/shrinks upward
+                let new_y = pos.y + size.height - new_h;
+                let new_pos = tauri::LogicalPosition::new(pos.x, new_y);
+                let new_size = tauri::LogicalSize::new(OVERLAY_WIDTH, new_h);
+                if new_h > size.height {
+                    // Growing: move up first so the bottom never dips offscreen
+                    let _ = w.set_position(new_pos);
+                    let _ = w.set_size(new_size);
+                } else {
+                    let _ = w.set_size(new_size);
+                    let _ = w.set_position(new_pos);
+                }
+            }
+        }
+    } else {
+        create_overlay_window(app_handle, rows);
+    }
+
+    let _ = app_handle.emit("overlay-sessions", snapshot);
+}
+
+/// Remove a finished/cancelled session row and reconcile the window.
+fn end_overlay_session(app_handle: &tauri::AppHandle, session_id: Option<u64>) {
+    if let Some(id) = session_id {
+        let sessions = app_handle.state::<Arc<OverlaySessions>>();
+        sessions.end(id);
+    }
+    sync_overlay(app_handle);
+}
+
+fn create_overlay_window(app_handle: &tauri::AppHandle, rows: usize) {
+    let saved = settings::get_settings();
+    let height = overlay::overlay_height(rows.max(1));
+    let (sx, sy, sw, sh) = cursor_screen_bounds(app_handle);
+    // Saved position stores the BOTTOM-left anchor so the stack grows upward
+    let (pos_x, bottom_y) = if let (Some(rx), Some(ry)) = (saved.overlay_rx, saved.overlay_ry) {
+        (sx + rx * sw, sy + ry * sh)
+    } else {
+        (
+            sx + (sw - OVERLAY_WIDTH) / 2.0,
+            sy + sh - OVERLAY_BOTTOM_OFFSET,
+        )
+    };
+    let pos_y = bottom_y - height;
 
     match tauri::WebviewWindowBuilder::new(
         app_handle,
@@ -422,7 +514,7 @@ fn start_recording(app_handle: &tauri::AppHandle) {
         tauri::WebviewUrl::App("/src/overlay/index.html".into()),
     )
     .title("")
-    .inner_size(OVERLAY_WIDTH, OVERLAY_HEIGHT)
+    .inner_size(OVERLAY_WIDTH, height)
     .position(pos_x, pos_y)
     .resizable(false)
     .maximizable(false)
@@ -443,25 +535,6 @@ fn start_recording(app_handle: &tauri::AppHandle) {
         }
         Err(e) => log::error!("Failed to create overlay: {}", e),
     }
-
-    // Play start sound BEFORE opening mic (blocking) so it won't be recorded
-    if saved.sound_enabled {
-        sound::play_start_sound();
-    }
-
-    // Rescue mic input gain — other apps (e.g. WeChat) silently lower the
-    // system input volume, shrinking the waveform and hurting accuracy.
-    mic_gain::ensure_min_gain(saved.mic_min_gain);
-
-    if let Err(e) = recorder.start(app_handle.clone()) {
-        log::error!("Failed to start recording: {}", e);
-        close_overlay(app_handle);
-        return;
-    }
-    log::info!("Recording started");
-
-    // Register Escape only while recording
-    register_escape(app_handle);
 }
 
 fn stop_and_transcribe(app_handle: &tauri::AppHandle) {
@@ -469,15 +542,17 @@ fn stop_and_transcribe(app_handle: &tauri::AppHandle) {
 
     let recorder = app_handle.state::<Arc<AudioRecorder>>();
     let history = app_handle.state::<Arc<HistoryManager>>();
+    let sessions = app_handle.state::<Arc<OverlaySessions>>();
 
-    // Notify overlay
-    let _ = app_handle.emit("transcribing", ());
+    // Flip this session's overlay row to the transcribing state
+    let session_id = sessions.take_recording_as_transcribing();
+    sync_overlay(app_handle);
 
     let audio = match recorder.stop() {
         Ok(a) => a,
         Err(e) => {
             log::error!("Failed to stop recording: {}", e);
-            close_overlay(app_handle);
+            end_overlay_session(app_handle, session_id);
             return;
         }
     };
@@ -503,7 +578,7 @@ fn stop_and_transcribe(app_handle: &tauri::AppHandle) {
         Ok(d) => d,
         Err(e) => {
             log::error!("Failed to encode WAV: {}", e);
-            close_overlay(app_handle);
+            end_overlay_session(app_handle, session_id);
             return;
         }
     };
@@ -525,7 +600,7 @@ fn stop_and_transcribe(app_handle: &tauri::AppHandle) {
     let active_key = settings.active_api_key().trim().to_string();
     if active_key.is_empty() {
         log::error!("API key not configured!");
-        close_overlay(app_handle);
+        end_overlay_session(app_handle, session_id);
         if let Some(w) = app_handle.get_webview_window("main") {
             let _ = w.show();
             let _ = w.set_focus();
@@ -538,6 +613,9 @@ fn stop_and_transcribe(app_handle: &tauri::AppHandle) {
     } else {
         None
     };
+    // Recording start = now (just stopped) minus duration; used to keep
+    // history in speaking order even when transcriptions finish out of order
+    let started_at = duration_ms.map(|d| chrono::Utc::now().timestamp_millis() - d);
 
     let http_client = match http::client_for_settings(&settings) {
         Ok(client) => client,
@@ -550,9 +628,10 @@ fn stop_and_transcribe(app_handle: &tauri::AppHandle) {
                 &settings.model,
                 duration_ms,
                 Some(&audio_path_str),
+                started_at,
             );
             let _ = app_handle.emit("transcription-error", message);
-            close_overlay(app_handle);
+            end_overlay_session(app_handle, session_id);
             return;
         }
     };
@@ -592,8 +671,9 @@ fn stop_and_transcribe(app_handle: &tauri::AppHandle) {
 
                 // Copy to clipboard and auto-paste into active app
                 let _ = handle.clipboard().write_text(&text);
-                // Close overlay first so the previously active app regains focus
-                close_overlay(&handle);
+                // Remove this row first (closes the overlay if it was the
+                // last one) so the previously active app regains focus
+                end_overlay_session(&handle, session_id);
                 // Paste on a dedicated OS thread — must NOT run on tokio
                 let paste_handle = handle.clone();
                 std::thread::spawn(move || {
@@ -605,20 +685,32 @@ fn stop_and_transcribe(app_handle: &tauri::AppHandle) {
                 });
 
                 // Save to history
-                let _ = history.add_entry(&text, &model, duration_ms, Some(&audio_path_str));
+                let _ = history.add_entry(
+                    &text,
+                    &model,
+                    duration_ms,
+                    Some(&audio_path_str),
+                    started_at,
+                );
             }
             Err(e) => {
                 log::error!("Transcription failed: {}", e);
 
                 // Save failed entry to history so user can retry
                 let error_text = format!("[Error: {}]", e);
-                let _ = history.add_entry(&error_text, &model, duration_ms, Some(&audio_path_str));
+                let _ = history.add_entry(
+                    &error_text,
+                    &model,
+                    duration_ms,
+                    Some(&audio_path_str),
+                    started_at,
+                );
 
                 let _ = handle.emit("transcription-error", e.to_string());
+                end_overlay_session(&handle, session_id);
             }
         }
 
-        close_overlay(&handle);
         // Notify main window to refresh (both success and failure)
         let _ = handle.emit("history-updated", ());
     });
@@ -630,7 +722,9 @@ fn cancel_recording(app_handle: &tauri::AppHandle) {
         log::info!("Cancelling recording...");
         unregister_escape(app_handle);
         recorder.cancel();
-        close_overlay(app_handle);
+        let sessions = app_handle.state::<Arc<OverlaySessions>>();
+        let cancelled = sessions.take_recording();
+        end_overlay_session(app_handle, cancelled);
     }
 }
 

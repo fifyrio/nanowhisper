@@ -26,6 +26,28 @@ pub fn clear_history(history: State<'_, Arc<HistoryManager>>) -> Result<(), Stri
     history.clear_all().map_err(|e| e.to_string())
 }
 
+#[derive(serde::Serialize)]
+pub struct StorageStats {
+    pub count: i64,
+    pub audio_bytes: u64,
+}
+
+#[tauri::command]
+pub fn get_storage_stats(history: State<'_, Arc<HistoryManager>>) -> Result<StorageStats, String> {
+    let count = history.entry_count().map_err(|e| e.to_string())?;
+    let mut audio_bytes = 0u64;
+    if let Ok(entries) = std::fs::read_dir(history.audio_dir()) {
+        for entry in entries.flatten() {
+            if let Ok(md) = entry.metadata() {
+                if md.is_file() {
+                    audio_bytes += md.len();
+                }
+            }
+        }
+    }
+    Ok(StorageStats { count, audio_bytes })
+}
+
 #[tauri::command]
 pub fn get_settings() -> AppSettings {
     settings::get_settings()
@@ -107,10 +129,26 @@ pub fn resume_shortcut(app: AppHandle) {
 #[tauri::command]
 pub fn save_overlay_position(app: AppHandle, x: f64, y: f64) {
     let (sx, sy, sw, sh) = crate::cursor_screen_bounds(&app);
+    // Persist the BOTTOM-left anchor: the stack of rows grows upward from
+    // this point, so the anchor stays meaningful at any row count.
+    let height = app
+        .get_webview_window("overlay")
+        .and_then(|w| {
+            let scale = w.scale_factor().ok()?;
+            Some(w.outer_size().ok()?.to_logical::<f64>(scale).height)
+        })
+        .unwrap_or(crate::overlay::ROW_HEIGHT);
     let mut s = settings::get_settings();
     s.overlay_rx = Some(((x - sx) / sw).clamp(0.0, 1.0));
-    s.overlay_ry = Some(((y - sy) / sh).clamp(0.0, 1.0));
+    s.overlay_ry = Some(((y + height - sy) / sh).clamp(0.0, 1.0));
     settings::save_settings(&s);
+}
+
+#[tauri::command]
+pub fn get_overlay_sessions(
+    sessions: State<'_, Arc<crate::overlay::OverlaySessions>>,
+) -> Vec<crate::overlay::SessionInfo> {
+    sessions.snapshot()
 }
 
 #[tauri::command]
