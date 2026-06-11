@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://github.com/jicaiinc/nanowhisper/releases/latest"><img alt="Latest Release" src="https://img.shields.io/github/v/release/jicaiinc/nanowhisper?style=flat-square&color=1c1c1e"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/jicaiinc/nanowhisper?style=flat-square&color=1c1c1e&cacheSeconds=1"></a>
-  <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-333?style=flat-square">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-333?style=flat-square">
 </p>
 
 <p align="center">
@@ -39,7 +39,8 @@ Powered by OpenAI, OpenAI-compatible transcription endpoints, and Google Gemini.
 - **One Shortcut** — Global hotkey to start/stop recording. No UI to navigate.
 - **Auto-Paste** — Transcribed text goes straight to your cursor. No copy needed.
 - **Waveform Overlay** — Minimal always-on-top visualizer while recording.
-- **History** — All transcriptions saved locally with audio files for retry.
+- **Concurrent Transcription** — Start the next recording while the previous one is still transcribing. Sessions stack above the recorder in the overlay, and each result pastes as soon as it is ready.
+- **History** — All transcriptions saved locally in speaking order, with audio files for retry.
 - **Provider Settings** — Use OpenAI, Gemini, or an OpenAI-compatible endpoint.
 - **Network Settings** — Use system proxy, no proxy, or a custom HTTP/SOCKS proxy.
 - **System Tray** — Runs quietly in the background.

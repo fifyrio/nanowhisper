@@ -97,9 +97,11 @@ Logo 源文件在 `src-tauri/logo/`：
 
 ### CI/CD
 
-GitHub Actions release workflow (`.github/workflows/release.yml`) triggered by `v*` tags. Builds for macOS ARM64, macOS x64, Linux x64, Windows x64.
+GitHub Actions release workflow (`.github/workflows/release.yml`) triggered by `v*` tags. Builds for macOS ARM64, macOS x64, Linux x64.
 
-### Windows 打包与签名
+### Windows 打包与签名（已停止维护，仅作历史参考）
+
+**2026-06-11 起不再维护 Windows**：Trusted Signing 证书身份验证到期（签名 403），决定停止 Windows 支持。Windows 已从 release 矩阵移除，新功能无需考虑 Windows 适配。以下为历史参考。
 
 Tauri v2 的 Windows 打包涉及两套独立的签名体系：
 
