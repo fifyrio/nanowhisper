@@ -1,9 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+#[allow(dead_code)] // referenced by the frontend provider select, not Rust
 pub const PROVIDER_OPENAI: &str = "openai";
 pub const PROVIDER_GEMINI: &str = "gemini";
 pub const PROVIDER_CUSTOM_OPENAI: &str = "custom_openai";
+pub const PROVIDER_TINGWU: &str = "tingwu";
 pub const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,6 +20,21 @@ pub struct AppSettings {
     pub custom_api_key: String,
     #[serde(default)]
     pub custom_base_url: String,
+    // ── Alibaba Tingwu (通义听悟) credentials. Empty = fall back to env vars. ──
+    #[serde(default)]
+    pub tingwu_access_key_id: String,
+    #[serde(default)]
+    pub tingwu_access_key_secret: String,
+    #[serde(default)]
+    pub tingwu_app_key: String,
+    #[serde(default)]
+    pub tingwu_region: String,
+    #[serde(default)]
+    pub tingwu_oss_endpoint: String,
+    #[serde(default)]
+    pub tingwu_oss_bucket: String,
+    #[serde(default)]
+    pub tingwu_oss_prefix: String,
     #[serde(default = "default_model")]
     pub model: String,
     #[serde(default = "default_language")]
@@ -41,7 +58,7 @@ pub struct AppSettings {
 }
 
 fn default_provider() -> String {
-    PROVIDER_OPENAI.to_string()
+    PROVIDER_TINGWU.to_string()
 }
 fn default_api_key() -> String {
     String::new()
@@ -73,6 +90,13 @@ impl Default for AppSettings {
             gemini_api_key: String::new(),
             custom_api_key: String::new(),
             custom_base_url: String::new(),
+            tingwu_access_key_id: String::new(),
+            tingwu_access_key_secret: String::new(),
+            tingwu_app_key: String::new(),
+            tingwu_region: String::new(),
+            tingwu_oss_endpoint: String::new(),
+            tingwu_oss_bucket: String::new(),
+            tingwu_oss_prefix: String::new(),
             model: default_model(),
             language: default_language(),
             proxy_mode: default_proxy_mode(),
@@ -93,6 +117,10 @@ impl AppSettings {
 
     pub fn is_custom_openai(&self) -> bool {
         self.provider == PROVIDER_CUSTOM_OPENAI
+    }
+
+    pub fn is_tingwu(&self) -> bool {
+        self.provider == PROVIDER_TINGWU
     }
 
     pub fn active_api_key(&self) -> &str {

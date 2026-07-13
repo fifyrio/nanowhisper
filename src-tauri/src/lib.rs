@@ -9,6 +9,7 @@ mod permissions;
 mod recorder;
 mod settings;
 mod sound;
+mod tingwu;
 mod transcribe;
 mod updater;
 
@@ -597,8 +598,24 @@ fn stop_and_transcribe(app_handle: &tauri::AppHandle) {
 
     let settings = settings::get_settings();
     let is_gemini = settings.is_gemini();
+    let is_tingwu = settings.is_tingwu();
     let active_key = settings.active_api_key().trim().to_string();
-    if active_key.is_empty() {
+
+    // Tingwu authenticates with AK/SK + OSS config rather than a single key.
+    let tingwu_cfg = if is_tingwu {
+        match tingwu::TingwuConfig::resolve(&settings) {
+            Ok(cfg) => Some(cfg),
+            Err(e) => {
+                log::error!("{}", e);
+                end_overlay_session(app_handle, session_id);
+                if let Some(w) = app_handle.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+                return;
+            }
+        }
+    } else if active_key.is_empty() {
         log::error!("API key not configured!");
         end_overlay_session(app_handle, session_id);
         if let Some(w) = app_handle.get_webview_window("main") {
@@ -606,7 +623,9 @@ fn stop_and_transcribe(app_handle: &tauri::AppHandle) {
             let _ = w.set_focus();
         }
         return;
-    }
+    } else {
+        None
+    };
 
     let duration_ms = if sample_rate > 0 {
         Some((sample_count as i64 * 1000) / sample_rate as i64)
@@ -651,7 +670,9 @@ fn stop_and_transcribe(app_handle: &tauri::AppHandle) {
             Some(language.as_str())
         };
 
-        let result = if is_gemini {
+        let result = if is_tingwu {
+            tingwu::transcribe_tingwu(&http_client, tingwu_cfg.unwrap(), wav_data, lang).await
+        } else if is_gemini {
             transcribe::transcribe_gemini(&http_client, &active_key, &model, wav_data, lang).await
         } else {
             transcribe::transcribe_audio(

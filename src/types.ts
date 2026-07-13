@@ -20,6 +20,13 @@ export interface AppSettings {
   gemini_api_key: string;
   custom_api_key: string;
   custom_base_url: string;
+  tingwu_access_key_id: string;
+  tingwu_access_key_secret: string;
+  tingwu_app_key: string;
+  tingwu_region: string;
+  tingwu_oss_endpoint: string;
+  tingwu_oss_bucket: string;
+  tingwu_oss_prefix: string;
   model: string;
   language: string;
   proxy_mode: string;

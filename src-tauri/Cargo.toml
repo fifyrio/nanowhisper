@@ -26,6 +26,11 @@ rusqlite_migration = "2.3"
 anyhow = "1"
 base64 = "0.22"
 chrono = "0.4"
+hmac = "0.12"
+sha2 = "0.10"
+sha1 = "0.10"
+hex = "0.4"
+uuid = { version = "1", features = ["v4"] }
 dirs = "6.0"
 dotenvy = "0.15"
 enigo = "0.6"
@@ -42,6 +47,9 @@ core-foundation = "0.10"
 objc2 = { version = "0.6.4", default-features = false, features = ["std"] }
 objc2-av-foundation = { version = "0.3.2", default-features = false, features = ["AVCaptureDevice", "AVMediaFormat", "block2"] }
 raw-window-handle = "0.6"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 
 [profile.release]
 lto = true

@@ -86,12 +86,20 @@ pub fn request_microphone() -> bool {
 
 #[tauri::command]
 pub async fn validate_api_key(settings: AppSettings) -> Result<(), String> {
+    let client = crate::http::client_for_settings(&settings).map_err(|e| e.to_string())?;
+
+    if settings.is_tingwu() {
+        let cfg = crate::tingwu::TingwuConfig::resolve(&settings).map_err(|e| e.to_string())?;
+        return crate::tingwu::validate_tingwu(&client, &cfg)
+            .await
+            .map_err(|e| e.to_string());
+    }
+
     let active_key = settings.active_api_key().trim().to_string();
     if active_key.is_empty() {
         return Err("API key not configured".into());
     }
 
-    let client = crate::http::client_for_settings(&settings).map_err(|e| e.to_string())?;
     if settings.is_gemini() {
         crate::transcribe::validate_gemini_api_key(&client, &active_key)
             .await
@@ -187,8 +195,9 @@ pub async fn retry_transcription(
 
     let settings = crate::settings::get_settings();
     let is_gemini = settings.is_gemini();
+    let is_tingwu = settings.is_tingwu();
     let active_key = settings.active_api_key().trim().to_string();
-    if active_key.is_empty() {
+    if !is_tingwu && active_key.is_empty() {
         return Err("API key not configured".into());
     }
 
@@ -199,7 +208,12 @@ pub async fn retry_transcription(
     };
 
     let client = crate::http::client_for_settings(&settings).map_err(|e| e.to_string())?;
-    let text = if is_gemini {
+    let text = if is_tingwu {
+        let cfg = crate::tingwu::TingwuConfig::resolve(&settings).map_err(|e| e.to_string())?;
+        crate::tingwu::transcribe_tingwu(&client, cfg, wav_data, lang)
+            .await
+            .map_err(|e| e.to_string())?
+    } else if is_gemini {
         transcribe::transcribe_gemini(&client, &active_key, &settings.model, wav_data, lang)
             .await
             .map_err(|e| e.to_string())?

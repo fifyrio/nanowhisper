@@ -22,10 +22,12 @@ const GEMINI_MODELS = [
   { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro" },
 ];
 const PROVIDER_CUSTOM_OPENAI = "custom_openai";
+const PROVIDER_TINGWU = "tingwu";
 const DEFAULT_MODELS: Record<string, string> = {
   openai: "gpt-4o-transcribe",
   gemini: "gemini-3-flash-preview",
   [PROVIDER_CUSTOM_OPENAI]: "whisper-1",
+  [PROVIDER_TINGWU]: "tingwu-offline",
 };
 
 const fieldStyle = {
@@ -42,6 +44,10 @@ function isCustomOpenAIProvider(provider: string): boolean {
   return provider === PROVIDER_CUSTOM_OPENAI;
 }
 
+function isTingwuProvider(provider: string): boolean {
+  return provider === PROVIDER_TINGWU;
+}
+
 function activeApiKey(settings: AppSettings): string {
   if (isGeminiProvider(settings.provider)) return settings.gemini_api_key;
   if (isCustomOpenAIProvider(settings.provider)) return settings.custom_api_key;
@@ -49,9 +55,10 @@ function activeApiKey(settings: AppSettings): string {
 }
 
 function canTestConnection(settings: AppSettings): boolean {
+  if (settings.proxy_mode === "custom" && !settings.proxy_url.trim()) return false;
+  if (isTingwuProvider(settings.provider)) return true; // backend validates via env fallback
   if (!activeApiKey(settings).trim() || !settings.model.trim()) return false;
   if (isCustomOpenAIProvider(settings.provider) && !settings.custom_base_url.trim()) return false;
-  if (settings.proxy_mode === "custom" && !settings.proxy_url.trim()) return false;
   return true;
 }
 
@@ -65,6 +72,50 @@ function providerKeyPlaceholder(provider: string): string {
   if (isGeminiProvider(provider)) return "AIza...";
   if (isCustomOpenAIProvider(provider)) return "sk-...";
   return "sk-proj-...";
+}
+
+function TingwuFields({
+  settings,
+  onChange,
+}: {
+  settings: AppSettings;
+  onChange: (patch: Partial<AppSettings>) => void;
+}) {
+  const fields: Array<{
+    key: keyof AppSettings;
+    label: string;
+    placeholder: string;
+    secret?: boolean;
+  }> = [
+    { key: "tingwu_access_key_id", label: "AccessKey ID", placeholder: "LTAI…", secret: true },
+    { key: "tingwu_access_key_secret", label: "AccessKey Secret", placeholder: "••••", secret: true },
+    { key: "tingwu_app_key", label: "Tingwu AppKey", placeholder: "AppKey", secret: true },
+    { key: "tingwu_region", label: "Region", placeholder: "cn-beijing" },
+    { key: "tingwu_oss_endpoint", label: "OSS Endpoint", placeholder: "oss-cn-beijing.aliyuncs.com" },
+    { key: "tingwu_oss_bucket", label: "OSS Bucket", placeholder: "my-bucket" },
+    { key: "tingwu_oss_prefix", label: "OSS Prefix", placeholder: "meeting-audio/" },
+  ];
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
+        留空的字段将回退到环境变量（<code>.env</code>）。
+      </p>
+      {fields.map((f) => (
+        <div key={f.key as string}>
+          <label className="block text-xs mb-1" style={{ color: "var(--text-secondary)" }}>{f.label}</label>
+          <input
+            type={f.secret ? "password" : "text"}
+            value={(settings[f.key] as string) ?? ""}
+            onChange={(e) => onChange({ [f.key]: e.target.value } as Partial<AppSettings>)}
+            placeholder={f.placeholder}
+            className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+            style={fieldStyle}
+          />
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function ConnectionSettings({
@@ -112,11 +163,16 @@ function ConnectionSettings({
           className="w-full px-3 py-2 rounded-lg text-sm outline-none"
           style={fieldStyle}
         >
+          <option value={PROVIDER_TINGWU}>阿里通义听悟 (Tingwu)</option>
           <option value="openai">OpenAI</option>
           <option value="gemini">Gemini</option>
           <option value={PROVIDER_CUSTOM_OPENAI}>OpenAI-compatible</option>
         </select>
       </div>
+
+      {isTingwuProvider(settings.provider) && (
+        <TingwuFields settings={settings} onChange={onChange} />
+      )}
 
       {isCustomOpenAIProvider(settings.provider) && (
         <div>
@@ -132,6 +188,7 @@ function ConnectionSettings({
         </div>
       )}
 
+      {!isTingwuProvider(settings.provider) && (
       <div>
         <label className="block text-xs mb-1" style={{ color: "var(--text-secondary)" }}>{providerKeyLabel(settings.provider)}</label>
         <input
@@ -143,7 +200,9 @@ function ConnectionSettings({
           style={fieldStyle}
         />
       </div>
+      )}
 
+      {!isTingwuProvider(settings.provider) && (
       <div>
         <label className="block text-xs mb-1" style={{ color: "var(--text-secondary)" }}>Model</label>
         {isCustomOpenAIProvider(settings.provider) ? (
@@ -168,6 +227,7 @@ function ConnectionSettings({
           </select>
         )}
       </div>
+      )}
 
       <div>
         <label className="block text-xs mb-1" style={{ color: "var(--text-secondary)" }}>Network</label>
