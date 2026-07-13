@@ -54,6 +54,22 @@ function activeApiKey(settings: AppSettings): string {
   return settings.api_key;
 }
 
+// Whether the active provider has enough config to skip onboarding.
+// Tingwu authenticates with AK/SK + OSS fields, not a single api key, so it
+// must be checked on its own fields (blank ones fall back to env at runtime).
+function isProviderConfigured(settings: AppSettings): boolean {
+  if (isTingwuProvider(settings.provider)) {
+    return Boolean(
+      settings.tingwu_access_key_id.trim() &&
+        settings.tingwu_access_key_secret.trim() &&
+        settings.tingwu_app_key.trim() &&
+        settings.tingwu_oss_endpoint.trim() &&
+        settings.tingwu_oss_bucket.trim(),
+    );
+  }
+  return Boolean(activeApiKey(settings).trim());
+}
+
 function canTestConnection(settings: AppSettings): boolean {
   if (settings.proxy_mode === "custom" && !settings.proxy_url.trim()) return false;
   if (isTingwuProvider(settings.provider)) return true; // backend validates via env fallback
@@ -416,8 +432,7 @@ function App() {
   const loadSettings = useCallback(async () => {
     const s = await invoke<AppSettings>("get_settings");
     setSettings(s);
-    const key = activeApiKey(s);
-    if (!key) setView("onboarding");
+    if (!isProviderConfigured(s)) setView("onboarding");
   }, []);
 
   const checkPermissions = useCallback(async () => {
